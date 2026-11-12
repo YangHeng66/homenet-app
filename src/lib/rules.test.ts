@@ -104,3 +104,42 @@ describe('probe', () => {
     expect(probe('example.org', rules.slice(0, 3), [], snap)).toMatchObject({ rule: '没有命中任何规则', target: 'DIRECT', path: ['DIRECT'] });
   });
 });
+
+describe('probe：真实配置里常见的规则集和 GEOIP', () => {
+  const m = (type: string, payload: string, proxy: string): Rule => ({ type, payload, proxy });
+  const tail = m('MATCH', '', '节点选择');
+
+  it.each(['direct', 'ChinaMax', 'China', 'cn_domain', 'geosite-cn', '国内', '直连', 'ChinaDomain'])('规则集 %s 按国内分类推测', name => {
+    const r = probe('www.bilibili.com', [m('RULE-SET', name, 'DIRECT'), tail], [], snap);
+    expect(r).toMatchObject({ target: 'DIRECT', guessed: true, rule: `RULE-SET,${name}` });
+  });
+
+  it.each(['proxy', 'gfw', 'Global', 'tld-not-cn'])('规则集 %s 按“国外常见站点”推测', name => {
+    expect(probe('www.google.com', [m('RULE-SET', name, '节点选择'), m('MATCH', '', 'DIRECT')], [], snap)).toMatchObject({ target: '节点选择', guessed: true });
+    expect(probe('www.bilibili.com', [m('RULE-SET', name, '节点选择'), m('MATCH', '', 'DIRECT')], [], snap)).toMatchObject({ target: 'DIRECT', rule: 'MATCH（前面的规则都没命中）' });
+  });
+
+  it('GEOSITE geolocation-!cn 命中国外站点，不命中国内站点', () => {
+    const rs = [m('GEOSITE', 'geolocation-!cn', '节点选择'), m('MATCH', '', 'DIRECT')];
+    expect(probe('github.com', rs, [], snap)).toMatchObject({ target: '节点选择', guessed: true });
+    expect(probe('www.bilibili.com', rs, [], snap)?.target).toBe('DIRECT');
+  });
+
+  it('GEOIP,CN 对国内常见域名按推测命中，国外域名不命中', () => {
+    const rs = [m('GEOIP', 'CN', 'DIRECT'), tail];
+    expect(probe('www.bilibili.com', rs, [], snap)).toMatchObject({ target: 'DIRECT', guessed: true, rule: 'GEOIP,CN' });
+    expect(probe('www.google.com', rs, [], snap)).toMatchObject({ target: '节点选择', guessed: false });
+  });
+
+  it('GEOIP 的其他国家和 private 不命中、也不算跳过', () => {
+    const rs = [m('GEOIP', 'private', 'DIRECT'), m('GEOIP', 'US', 'DIRECT'), tail];
+    expect(probe('www.bilibili.com', rs, [], snap)).toMatchObject({ target: '节点选择', skipped: 0 });
+  });
+
+  it('专门的服务规则集：youtube、openai、claude、bilibili', () => {
+    expect(probe('rr1.googlevideo.com', [m('RULE-SET', 'YouTube', 'YouTube'), tail], [], snap)?.target).toBe('YouTube');
+    expect(probe('chatgpt.com', [m('RULE-SET', 'OpenAI', 'DIRECT'), tail], [], snap)?.target).toBe('DIRECT');
+    expect(probe('claude.ai', [m('RULE-SET', 'Claude', 'DIRECT'), tail], [], snap)?.target).toBe('DIRECT');
+    expect(probe('www.bilibili.com', [m('RULE-SET', 'BiliBili', 'DIRECT'), tail], [], snap)?.target).toBe('DIRECT');
+  });
+});

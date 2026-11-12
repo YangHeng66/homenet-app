@@ -15,7 +15,7 @@ import { createSecretStore } from './secure';
 import { Backoff, describeError, fence, StaleError, type ErrorView, type ModuleKey } from './session';
 import { beforeEachTick, setPollInterval } from './poll';
 import { setSystemBars } from './native';
-import { probe } from './rules';
+import { planReach } from './reach';
 
 export type Page = 'home' | 'proxy' | 'dev' | 'more';
 export type Theme = 'auto' | 'dark' | 'light';
@@ -137,7 +137,7 @@ class Store {
   sinrHist = $state.raw<number[]>([]);
 
   /** 首页连通性：站点 → 经哪个分组、延迟 */
-  reach = $state.raw<{ name: string; via: string; delay: number | null }[]>([]);
+  reach = $state.raw<{ name: string; via: string; delay: number | null; guessed: boolean }[]>([]);
   reachAt = $state(0);
 
   has(f: PluginFeature) { return this.features.includes(f); }
@@ -412,7 +412,10 @@ export async function addLog(status: LogStatus, action: string, detail: string) 
 
 const REACH_SITES: [string, string][] = [['Claude', 'claude.ai'], ['Google', 'www.google.com'], ['GitHub', 'github.com'], ['YouTube', 'www.youtube.com'], ['哔哩哔哩', 'www.bilibili.com']];
 
-/** 按规则找到每个站点走的分组，再经该分组测一次延迟 */
+/**
+ * 每个站点走哪个分组：有实时连接就用连接实际走的分组，否则按规则推测。
+ * 延迟测的是线路延迟（和 Clash 面板一致），不是请求网站首页的耗时。
+ */
 export async function refreshReach() {
   const m = conn.mihomo;
   if (!m) return;
@@ -423,12 +426,12 @@ export async function refreshReach() {
   }
   if (!s.proxies) await refreshProxies();
   if (!s.proxies) return;
+  if (!s.conns) await refreshConns();
   const myRules = conn.plugin && s.has('my-rules') ? (s.myRules.length ? s.myRules : await conn.plugin.myRules()) : [];
   s.reach = await Promise.all(REACH_SITES.map(async ([name, host]) => {
-    const r = probe(host, s.rules, myRules, s.proxies!);
-    const target = r?.target ?? 'DIRECT';
-    const delay = await m.testNode(target, `https://${host}`).catch(() => null);
-    return { name, via: target === 'DIRECT' ? '直连' : `经 ${target}`, delay };
+    const p = planReach(host, s.rules, myRules, s.proxies!, s.conns?.connections);
+    const delay = await m.testNode(p.target, p.testUrl).catch(() => null);
+    return { name, via: p.target === 'DIRECT' ? '直连' : `经 ${p.target}`, delay, guessed: p.guessed };
   }));
   s.reachAt = Date.now();
 }

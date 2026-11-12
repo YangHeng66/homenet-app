@@ -109,10 +109,10 @@
     </button>
     {#if conn.mihomo}
       <section class="card tile w2">
-        <div class="lbl">连通性<span class="r mono dim">{reachAgo}</span></div>
+        <div class="lbl">连通性 · 线路延迟<span class="r mono dim">{reachAgo}</span></div>
         <ul class="reach">
           {#each s.reach as r (r.name)}
-            <li><i class={r.delay == null ? 'x' : r.delay < 200 ? '' : r.delay < 320 ? 'w' : 'x'}></i><span>{r.name} <span class="dim mono" style="font-size:11px">{r.via}</span></span><b class={latClass(r.delay)}>{r.delay == null ? '超时' : r.delay + 'ms'}</b></li>
+            <li><i class={r.delay == null ? 'x' : r.delay < 200 ? '' : r.delay < 320 ? 'w' : 'x'}></i><span>{r.name} <span class="dim mono" style="font-size:11px" title={r.guessed ? '按规则名推测的分组，看到这个网站的实时连接后会以实际为准' : undefined}>{r.via}{r.guessed ? ' · 推测' : ''}</span></span><b class={latClass(r.delay)}>{r.delay == null ? '超时' : r.delay + 'ms'}</b></li>
           {/each}
         </ul>
       </section>

@@ -42,8 +42,32 @@ export function normalizeHost(raw: string): string {
 
 const suffixOf = (d: string, s: string) => d === s || d.endsWith('.' + s);
 
+const FOREIGN = [
+  ...GEO.google, ...GEO.youtube, ...GEO.github, ...GEO.openai, ...GEO.anthropic, ...GEO.telegram, ...GEO.netflix,
+  'twitter.com', 'x.com', 'facebook.com', 'instagram.com', 'whatsapp.com', 'wikipedia.org', 'reddit.com', 'discord.com',
+];
+const ALIAS: Record<string, string[]> = {
+  claude: GEO.anthropic,
+  chatgpt: GEO.openai,
+  bilibili: ['bilibili.com', 'bilivideo.com', 'biliapi.net', 'hdslb.com'],
+};
+
+/**
+ * 规则集 / GEOSITE 的名字 → 代表性域名。真实配置里名字五花八门（direct、ChinaMax、geolocation-!cn、国内…），
+ * 先判断“非国内”，再判断“国内”，最后按服务名找。认不出返回 null。
+ */
+function categoryList(raw: string): string[] | null {
+  const n = raw.toLowerCase().replace(/^(geolocation|geosite|category)[-_]/, '').replace(/[-_](domains?|sites?|list|rules?)$/, '');
+  if (GEO[n]) return GEO[n];
+  if (ALIAS[n]) return ALIAS[n];
+  if (/!cn|not[-_]?cn|non[-_]?cn|gfw|proxy|global|foreign|overseas|国外|海外|代理/.test(n)) return FOREIGN;
+  if (/^(china|chinamax|chinadomain|chinamedia|direct|domestic)$|国内|直连|中国/.test(n)) return GEO.cn;
+  const k = Object.keys({ ...GEO, ...ALIAS }).find(k => n.startsWith(k));
+  return k ? (GEO[k] ?? ALIAS[k]) : null;
+}
+
 function geoGuess(name: string, d: string): boolean | null {
-  const list = GEO[name.toLowerCase().replace(/^geolocation-/, '')];
+  const list = categoryList(name);
   if (!list) return null;
   return list.some(s => suffixOf(d, s));
 }
@@ -85,6 +109,8 @@ export function probe(raw: string, rules: Rule[], myRules: MyRule[], snap: Proxy
         hit = geoGuess(p, d);
         guessed = hit === true;
         break;
+      // 读不到 IP 库：国内常见域名多半解析到国内 IP，按推测命中；其他国家和 private 一律不命中
+      case 'GEOIP': hit = p === 'cn' && GEO.cn.some(s => suffixOf(d, s)); guessed = hit; break;
       case 'MATCH': hit = true; break;
       default: hit = /^(GEOIP|IP-|SRC-|DST-|PROCESS|IN-|NETWORK|UID|SUB-RULE|AND|OR|NOT)/.test(r.type) ? false : null;
     }

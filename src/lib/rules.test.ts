@@ -109,6 +109,17 @@ describe('probe：真实配置里常见的规则集和 GEOIP', () => {
   const m = (type: string, payload: string, proxy: string): Rule => ({ type, payload, proxy });
   const tail = m('MATCH', '', '节点选择');
 
+  it('Google 规则集也包含 YouTube（geosite:google 本来就含 youtube）', () => {
+    expect(probe('www.youtube.com', [m('RULE-SET', 'Google-Site', 'Google'), tail], [], snap)).toMatchObject({ target: 'Google', guessed: true });
+  });
+
+  it('IP 规则集：China-IP 按 GEOIP,CN 推测，其他 IP 规则集不命中也不算跳过', () => {
+    const rs = [m('RULE-SET', 'Local-IP', 'DIRECT'), m('RULE-SET', 'Telegram-IP', 'TG'), m('RULE-SET', 'China-IP', 'CN'), tail];
+    expect(probe('www.bilibili.com', rs, [], snap)).toMatchObject({ target: 'CN', guessed: true, skipped: 0 });
+    expect(probe('www.google.com', rs, [], snap)).toMatchObject({ target: '节点选择', guessed: false, skipped: 0 });
+    expect(probe('example.org', [m('RULE-SET', 'lan_cidr', 'DIRECT'), m('RULE-SET', 'cncidr', 'CN'), tail], [], snap)).toMatchObject({ target: '节点选择', skipped: 0 });
+  });
+
   it.each(['direct', 'ChinaMax', 'China', 'cn_domain', 'geosite-cn', '国内', '直连', 'ChinaDomain'])('规则集 %s 按国内分类推测', name => {
     const r = probe('www.bilibili.com', [m('RULE-SET', name, 'DIRECT'), tail], [], snap);
     expect(r).toMatchObject({ target: 'DIRECT', guessed: true, rule: `RULE-SET,${name}` });

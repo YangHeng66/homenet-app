@@ -58,6 +58,8 @@ const ALIAS: Record<string, string[]> = {
  */
 function categoryList(raw: string): string[] | null {
   const n = raw.toLowerCase().replace(/^(geolocation|geosite|category)[-_]/, '').replace(/[-_](domains?|sites?|list|rules?)$/, '');
+  // geosite:google 本来就包含 YouTube 的域名
+  if (n === 'google') return [...GEO.google, ...GEO.youtube];
   if (GEO[n]) return GEO[n];
   if (ALIAS[n]) return ALIAS[n];
   if (/!cn|not[-_]?cn|non[-_]?cn|gfw|proxy|global|foreign|overseas|国外|海外|代理/.test(n)) return FOREIGN;
@@ -65,6 +67,11 @@ function categoryList(raw: string): string[] | null {
   const k = Object.keys({ ...GEO, ...ALIAS }).find(k => n.startsWith(k));
   return k ? (GEO[k] ?? ALIAS[k]) : null;
 }
+
+/** China-IP、Local-IP、cncidr 这类 IP 规则集：只有国内的能按域名推测，其余对域名一律不命中 */
+const IP_SET = /(^|[-_])(ip|ipcidr|cidr)s?$|cidr$/;
+const CN_NAME = /^(china|cn|chinaip|domestic)([-_]?(ip|ipcidr|cidr)s?)?$/;
+const cnGuess = (d: string) => GEO.cn.some(s => suffixOf(d, s));
 
 function geoGuess(name: string, d: string): boolean | null {
   const list = categoryList(name);
@@ -104,13 +111,17 @@ export function probe(raw: string, rules: Rule[], myRules: MyRule[], snap: Proxy
       case 'DOMAIN-SUFFIX': hit = suffixOf(d, p); break;
       case 'DOMAIN-KEYWORD': hit = d.includes(p); break;
       case 'DOMAIN-REGEX': try { hit = new RegExp(r.payload).test(d); } catch { hit = null; } break;
-      case 'GEOSITE':
       case 'RULE-SET':
+        if (IP_SET.test(p)) { hit = CN_NAME.test(p) && cnGuess(d); guessed = hit; break; }
+        hit = geoGuess(p, d);
+        guessed = hit === true;
+        break;
+      case 'GEOSITE':
         hit = geoGuess(p, d);
         guessed = hit === true;
         break;
       // 读不到 IP 库：国内常见域名多半解析到国内 IP，按推测命中；其他国家和 private 一律不命中
-      case 'GEOIP': hit = p === 'cn' && GEO.cn.some(s => suffixOf(d, s)); guessed = hit; break;
+      case 'GEOIP': hit = p === 'cn' && cnGuess(d); guessed = hit; break;
       case 'MATCH': hit = true; break;
       default: hit = /^(GEOIP|IP-|SRC-|DST-|PROCESS|IN-|NETWORK|UID|SUB-RULE|AND|OR|NOT)/.test(r.type) ? false : null;
     }

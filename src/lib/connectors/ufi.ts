@@ -37,8 +37,9 @@ const LOGIN_COOLDOWN_MS = 600_000;
 const F50_LTE_BANDS = [1, 3, 5, 8, 34, 38, 39, 40, 41];
 
 const SIGNAL_FIELDS = [
-  'network_type', 'network_provider', 'ppp_status', 'signalbar', 'Nr_bands', 'Nr_pci', 'Nr_snr', 'nr_rsrp', 'nr_rsrq',
-  'Lte_bands', 'Lte_pci', 'Lte_snr', 'lte_rsrp', 'lte_rsrq', 'Z5g_rsrp', 'realtime_rx_thrpt', 'realtime_tx_thrpt',
+  // 真机上 Nr_* / Lte_* 直接查都是空字符串，要查 network_information 才会展开成有值的字段；
+  // 同一请求里再直接查它们，空值会盖掉展开的值，所以只查 network_information
+  'network_type', 'network_provider', 'ppp_status', 'signalbar', 'network_information', 'Z5g_rsrp', 'realtime_rx_thrpt', 'realtime_tx_thrpt',
   'cr_version', 'roam_setting_option', 'dial_roam_setting_option',
 ];
 
@@ -95,18 +96,20 @@ function parseTemps(info: Record<string, unknown>, throttleAt: number): UfiTemps
 function parseSignal(s: Record<string, string>): UfiSignal {
   const nr = has(s.Nr_bands) || has(s.nr_rsrp);
   const lte = has(s.Lte_bands) || has(s.lte_rsrp);
-  const type = String(s.network_type ?? '');
-  // network_type：20 = 5G NR，13 = LTE；SA 下 LTE 字段为空
-  const network = type === '20' || (nr && type !== '13') ? (lte ? '5G NSA' : '5G SA') : type === '13' ? '4G' : type;
+  const type = String(s.network_type ?? '').toUpperCase();
+  // network_type 直接查是 "5G" / "LTE"，network_information 里是 20 / 13；SA 下 LTE 字段为空
+  const is4g = /^(13|LTE|4G)$/.test(type);
+  const network = !is4g && (nr || /^(20|5G|NR|SA|NSA)/.test(type)) ? (lte ? '5G NSA' : '5G SA') : is4g ? '4G' : type;
   const bands: string[] = [];
   if (has(s.Nr_bands)) bands.push(`n${s.Nr_bands}`);
   if (has(s.Lte_bands)) bands.push(`B${s.Lte_bands}`);
+  const opt = (v: unknown) => (has(v) ? num(v) : undefined);
   return {
     network, operator: s.network_provider ?? '', bands,
-    rsrp: num(nr ? s.nr_rsrp ?? s.Z5g_rsrp : s.lte_rsrp),
-    rsrq: num(nr ? s.nr_rsrq : s.lte_rsrq),
-    sinr: num(nr ? s.Nr_snr : s.Lte_snr),
-    pci: num(nr ? s.Nr_pci : s.Lte_pci),
+    rsrp: num(nr ? (has(s.nr_rsrp) ? s.nr_rsrp : s.Z5g_rsrp) : has(s.lte_rsrp) ? s.lte_rsrp : s.Z5g_rsrp),
+    rsrq: opt(nr ? s.nr_rsrq : s.lte_rsrq),
+    sinr: opt(nr ? s.Nr_snr : s.Lte_snr),
+    pci: opt(nr ? s.Nr_pci : s.Lte_pci),
     bars: Math.max(0, Math.min(4, Math.round(num(s.signalbar)))),
   };
 }

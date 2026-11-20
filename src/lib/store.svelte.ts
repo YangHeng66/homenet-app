@@ -345,7 +345,7 @@ export async function refreshUfi() {
   if (!st) return;
   s.ufi = st;
   s.rsrpHist = push(s.rsrpHist, toPct(st.signal.rsrp, -140, -44), SIG);
-  s.sinrHist = push(s.sinrHist, toPct(st.signal.sinr, -10, 30), SIG);
+  if (st.signal.sinr != null) s.sinrHist = push(s.sinrHist, toPct(st.signal.sinr, -10, 30), SIG);
 }
 
 /** F50 页的各项分别读，一项失败（比如短信接口）不影响别的 */

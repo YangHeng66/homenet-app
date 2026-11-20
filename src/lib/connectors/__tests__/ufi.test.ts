@@ -34,9 +34,14 @@ const BASE_INFO = {
   cpu_temp_list: [{ type: 'soc-thmzone', temp: 55000 }, { type: 'board-thmzone', temp: 52000 }, { type: 'nr-thmzone', temp: 51000 }, { type: 'pa-thmzone', temp: 49000 }],
 };
 
-/* 5G SA 下 goform 的字段样例（字段名来自真机记录，取值是示例） */
+/*
+ * 5G SA 下 goform 的字段样例（字段名来自真机记录，取值是示例）。
+ * 真机上 Nr_* / Lte_* 这些小区字段直接查都是空字符串，只有查 network_information 才会展开成有值的字段；
+ * 同一次请求里两者都查时，直接查的空值会盖掉展开的值。network_type 直接查是 "5G"，展开里是数字 20。
+ */
+const CELL = /^(Nr_|Lte_|nr_rs|lte_rs)/;
 const FIELDS: Record<string, string> = {
-  network_type: '20', network_provider: '中国移动', ppp_status: 'ipv4_ipv6_connected', signalbar: '4',
+  network_type: '5G', cell_network_type: '20', network_provider: '中国移动', ppp_status: 'ipv4_ipv6_connected', signalbar: '4',
   Nr_bands: '41', Nr_pci: '371', Nr_snr: '4.5', nr_rsrp: '-86', nr_rsrq: '-12', Z5g_rsrp: '-86',
   Lte_bands: '', Lte_pci: '', Lte_snr: '', lte_rsrp: '', lte_rsrq: '',
   net_select: 'WL_AND_5G', realtime_rx_thrpt: '5242880', realtime_tx_thrpt: '318000',
@@ -80,7 +85,12 @@ function f50(over: Partial<{ fields: Record<string, string>; savedCookie: string
         const cmds = (c.query.get('cmd') ?? '').split(',');
         if (cmds[0] === 'sms_data_total') return { messages: SMS };
         if (cmds.includes('queryAccessPointInfo')) return logged ? s.wifi : {};
-        return Object.fromEntries(cmds.map(k => [k, k === 'loginfo' ? (logged ? 'ok' : '') : k === 'LD' || logged ? s.fields[k] ?? '' : '']));
+        const info = cmds.includes('network_information') && logged
+          ? { ...Object.fromEntries(Object.entries(s.fields).filter(([k]) => CELL.test(k))), network_type: s.fields.cell_network_type }
+          : {};
+        const direct = cmds.filter(k => k !== 'network_information')
+          .map(k => [k, k === 'loginfo' ? (logged ? 'ok' : '') : CELL.test(k) ? '' : k === 'LD' || logged ? s.fields[k] ?? '' : '']);
+        return { ...info, ...Object.fromEntries(direct) };
       }
       case SET: {
         const form = Object.fromEntries(c.form);
@@ -232,12 +242,26 @@ describe('UFI 连接器：状态', () => {
 
   it('4G：用 LTE 字段；断开时 dataOn 为 false；温度列表是字符串、单位是 ℃ 也能读', async () => {
     const d = f50({
-      fields: { network_type: '13', Nr_bands: '', Nr_pci: '', Nr_snr: '', nr_rsrp: '', nr_rsrq: '', Z5g_rsrp: '', Lte_bands: '39', Lte_pci: '88', Lte_snr: '11', lte_rsrp: '-101', lte_rsrq: '-9', ppp_status: 'ppp_disconnected', signalbar: '9' },
+      fields: { network_type: 'LTE', cell_network_type: '13', Nr_bands: '', Nr_pci: '', Nr_snr: '', nr_rsrp: '', nr_rsrq: '', Z5g_rsrp: '', Lte_bands: '39', Lte_pci: '88', Lte_snr: '11', lte_rsrp: '-101', lte_rsrq: '-9', ppp_status: 'ppp_disconnected', signalbar: '9' },
       base: { ...BASE_INFO, cpu_temp_list: JSON.stringify([{ type: 'cpu', temp: 47 }]), cpu_temp: 47 },
     });
     const s = await make(d, { throttleAt: 70 }).status();
     expect(s.signal).toEqual({ network: '4G', operator: '中国移动', bands: ['B39'], rsrp: -101, rsrq: -9, sinr: 11, pci: 88, bars: 4 });
     expect(s).toMatchObject({ dataOn: false, pdp: '', temps: { board: 47, soc: 47, modem: 47, pa: 47, throttleAt: 70 } });
+  });
+});
+
+describe('UFI 连接器：信号字段缺失', () => {
+  it('SINR、RSRQ、PCI 是空字符串时不当成 0', async () => {
+    const d = f50({ fields: { Nr_snr: '', nr_rsrq: '', Nr_pci: '' } });
+    const s = (await make(d).status()).signal;
+    expect(s).toMatchObject({ network: '5G SA', bands: ['n41'], rsrp: -86 });
+    expect([s.sinr, s.rsrq, s.pci]).toEqual([undefined, undefined, undefined]);
+  });
+
+  it('nr_rsrp 为空时用 Z5g_rsrp', async () => {
+    const d = f50({ fields: { nr_rsrp: '', Z5g_rsrp: '-79' } });
+    expect((await make(d).status()).signal.rsrp).toBe(-79);
   });
 });
 

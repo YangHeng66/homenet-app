@@ -109,7 +109,7 @@
       <path d={rs} stroke="var(--lime)" stroke-width="2" fill="none" vector-effect="non-scaling-stroke" />
       <path d={sn} stroke="var(--sky)" stroke-width="2" fill="none" vector-effect="non-scaling-stroke" opacity=".85" />
     </svg>
-    <div class="legend"><span><i style="background:var(--lime)"></i>RSRP −{Math.abs(st.signal.rsrp)} dBm</span><span><i style="background:var(--sky)"></i>SINR {st.signal.sinr} dB</span><span>PCI {st.signal.pci}</span></div>
+    <div class="legend"><span><i style="background:var(--lime)"></i>RSRP −{Math.abs(st.signal.rsrp)} dBm</span><span><i style="background:var(--sky)"></i>SINR {st.signal.sinr ?? '—'} dB</span><span>PCI {st.signal.pci ?? '—'}</span></div>
   </section>
 
   {#if s.bands}

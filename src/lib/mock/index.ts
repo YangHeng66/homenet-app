@@ -455,7 +455,7 @@ export function createMockConnectors(): MockConnectors {
       for (const c of w.clients) c.rate.down = jitter((clientBase[c.mac] ??= c.rate.down), 0.15);
       const sig = w.ufi.status.signal;
       sig.rsrp = Math.round(clamp(sig.rsrp + (Math.random() - 0.5) * 4, -100, -75));
-      sig.sinr = Math.round(clamp(sig.sinr + (Math.random() - 0.5) * 3, -2, 14));
+      sig.sinr = Math.round(clamp((sig.sinr ?? 8) + (Math.random() - 0.5) * 3, -2, 14));
     },
   };
 }

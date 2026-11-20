@@ -6,6 +6,11 @@
   import { applyScene, toggleRouterWifi, toggleF50Wifi, toggleData, toggleNikki, speedTest, updateAllSubs, resetWan, rebootF50 } from '../../lib/actions';
   import { ago, gb, mbs, latClass } from '../../lib/format';
   import type { IconName } from '../../lib/icons';
+  import type { UfiSignal } from '../../lib/types';
+
+  const sigCap = (g: UfiSignal) => g.sinr == null && g.rsrq == null
+    ? `RSRP −${Math.abs(g.rsrp)} dBm`
+    : `SINR ${g.sinr ?? '—'} · RSRQ ${g.rsrq != null ? `−${Math.abs(g.rsrq)}` : '—'}`;
   import Icon from '../parts/Icon.svelte';
   import Topo from '../parts/Topo.svelte';
   import KeyLineCard from '../parts/KeyLineCard.svelte';
@@ -15,7 +20,7 @@
 
   onMount(() => {
     refreshWifi(); refreshClients(); loadF50();
-    if (conn.mihomo && !s.providers.length) conn.mihomo.getProviders().then(p => (s.providers = p));
+    if (conn.mihomo && !s.providers.length) conn.mihomo.getProviders().then(p => (s.providers = p), () => {});
     if (Date.now() - s.reachAt > 60_000) refreshReach();
     return poll(() => Promise.all([refreshSpeed(), refreshRouter(), refreshUfi(), refreshConns()]));
   });
@@ -50,6 +55,11 @@
   const quota = $derived(s.usage?.quota ?? 100 * 1024 ** 3);
   const month = $derived(s.ufi?.monthBytes ?? s.usage?.daily.reduce((a, b) => a + b, 0) ?? 0);
   const online = $derived(s.clients.filter(c => c.online));
+  // 没有插件时路由器给不出单设备速率，改为显示无线 / 有线台数
+  const linkSummary = $derived.by(() => {
+    const wifi = online.filter(c => c.link !== 'wired').length;
+    return [wifi && `无线 ${wifi}`, online.length - wifi && `有线 ${online.length - wifi}`].filter(Boolean).join(' · ');
+  });
   const fastest = $derived(online.length ? online.reduce((a, b) => (b.rate.down > a.rate.down ? b : a)) : null);
   const reachAgo = $derived(s.reachAt ? ago(s.reachAt) : '');
 </script>
@@ -81,7 +91,7 @@
         <div class="lbl">{s.ufi.signal.network.startsWith('4G') ? '4G' : '5G'} 信号</div>
         <div class="bars4">{#each [30, 55, 80, 100] as h, i (h)}<i class:on={i < s.ufi.signal.bars} style="height:{h}%"></i>{/each}</div>
         <div class="val disp">{s.ufi.signal.bands[0] ?? '—'}</div>
-        <div class="cap mono">SINR {s.ufi.signal.sinr} · RSRQ −{Math.abs(s.ufi.signal.rsrq)}</div>
+        <div class="cap mono">{sigCap(s.ufi.signal)}</div>
       </button>
       <button class="card tile" onclick={() => go('dev')}>
         <div class="lbl">F50 温度</div>
@@ -105,7 +115,7 @@
       <div class="lbl">在线设备</div>
       <div class="avatars">{#each online.slice(0, 4) as c (c.mac)}<span style="background:{clientColor(c)}">{initials(c.name)}</span>{/each}</div>
       <div class="val disp">{online.length}<u>台</u></div>
-      <div class="cap mono">{fastest ? `最快 ${fastest.name} ↓${mbs(fastest.rate.down)}MB/s` : '—'}</div>
+      <div class="cap mono">{fastest && fastest.rate.down > 0 ? `最快 ${fastest.name} ↓${mbs(fastest.rate.down)}MB/s` : online.length ? linkSummary : '—'}</div>
     </button>
     {#if conn.mihomo}
       <section class="card tile w2">

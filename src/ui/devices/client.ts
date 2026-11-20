@@ -19,6 +19,9 @@ export function linkText(c: RouterClient): string {
 
 /** 头像缩写：英文名取前两个字母，中文名取第一个字（头像只有 30px） */
 export function initials(name: string): string {
+  // 没有主机名的设备用 IP 当名字，取最后一段才分得开
+  const ip = /^\d{1,3}(\.\d{1,3}){3}$/.test(name) ? name.split('.')[3] : null;
+  if (ip) return ip;
   const latin = name.replace(/[^A-Za-z0-9]/g, '');
   if (latin.length >= 2) return latin.slice(0, 2);
   return [...name][0] ?? '?';

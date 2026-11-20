@@ -6,10 +6,14 @@
   const down = $derived(rateParts((s.speedDown.at(-1) ?? 0) * 1024 * 1024));
   const up = $derived(rateParts((s.speedUp.at(-1) ?? 0) * 1024 * 1024));
   const hasF50 = !!conn.ufi;
+  const hasRouter = !!conn.router;
+  const hasMihomo = !!conn.mihomo;
+  // 中间节点：有路由器画路由器，只有代理时画代理内核；两个都没配就是 F50 直接到互联网
+  const hasMid = hasRouter || hasMihomo;
   const short = (v: string | undefined, d: string) => (v ? v.split(/\s+/).at(-1)! : d);
   const f50Name = $derived(short(s.ufi?.model, 'F50'));
   const routerName = $derived(short(s.board?.model, '路由器'));
-  const exitName = $derived(s.proxies ? keyLineMember() ?? '出口' : '出口');
+  const exitName = $derived(s.proxies ? keyLineMember() ?? '出口' : hasMihomo ? '出口' : '互联网');
   const radio = $derived(s.ufi ? `${s.ufi.signal.network.startsWith('5G') ? '5G' : '4G'} ${s.ufi.signal.bands[0] ?? ''}` : '');
   const kind = conn.profile.mihomo?.kind ?? 'mihomo';
   const delay = $derived.by(() => {
@@ -28,13 +32,16 @@
   </div>
   <svg class="map" viewBox="0 0 340 128" aria-hidden="true">
     {#if hasF50}
-      <path class="wire" d="M70 64 C 105 64, 115 64, 140 64" />
-      <path class="wire-hot" d="M70 64 C 105 64, 115 64, 140 64" pathLength="318" />
-      <path class="wire-hot b" d="M70 64 C 105 64, 115 64, 140 64" pathLength="318" />
+      {@const end = hasMid ? 140 : 270}
+      <path class="wire" d="M70 64 C 105 64, 115 64, {end} 64" />
+      <path class="wire-hot" d="M70 64 C 105 64, 115 64, {end} 64" pathLength="318" />
+      <path class="wire-hot b" d="M70 64 C 105 64, 115 64, {end} 64" pathLength="318" />
     {/if}
-    <path class="wire" d="M{rx + 66} 64 C {rx + 92} 64, 245 64, 270 64" />
-    <path class="wire-hot" d="M{rx + 66} 64 C {rx + 92} 64, 245 64, 270 64" pathLength="318" />
-    <path class="wire-hot b" d="M{rx + 66} 64 C {rx + 92} 64, 245 64, 270 64" pathLength="318" />
+    {#if hasMid}
+      <path class="wire" d="M{rx + 66} 64 C {rx + 92} 64, 245 64, 270 64" />
+      <path class="wire-hot" d="M{rx + 66} 64 C {rx + 92} 64, 245 64, 270 64" pathLength="318" />
+      <path class="wire-hot b" d="M{rx + 66} 64 C {rx + 92} 64, 245 64, 270 64" pathLength="318" />
+    {/if}
     {#if hasF50}
       <g transform="translate(14 30)">
         <ellipse cx="28" cy="74" rx="26" ry="5" fill="#000" opacity=".25" />
@@ -45,6 +52,7 @@
         <rect x="22" y="62" width="12" height="2" rx="1" fill="#6c7378" />
       </g>
     {/if}
+    {#if hasMid}
     <g transform="translate({rx} 28)">
       <ellipse cx="33" cy="76" rx="32" ry="5" fill="#000" opacity=".25" />
       <rect x="10" y="0" width="5" height="34" rx="2.5" fill="#d9dbd4" transform="rotate(-12 12 34)" />
@@ -55,6 +63,7 @@
       <circle class="blink-b" cx="32" cy="50" r="2.6" fill="#d4ff3a" />
       <rect x="42" y="47" width="14" height="6" rx="3" fill="#b4b7af" />
     </g>
+    {/if}
     <g transform="translate(272 32)">
       <circle cx="30" cy="32" r="30" fill="url(#gG)" />
       <ellipse cx="30" cy="32" rx="12" ry="30" fill="none" stroke="rgba(20,26,0,.35)" />
@@ -63,18 +72,18 @@
       <circle class="ripple" cx="20" cy="26" r="3.2" fill="none" stroke="#141a00" />
     </g>
     {#if hasF50}<text class="node-lbl" x="42" y="122" text-anchor="middle">{f50Name}</text>{/if}
-    <text class="node-lbl" x={rx + 33} y="122" text-anchor="middle">{routerName}</text>
+    {#if hasMid}<text class="node-lbl" x={rx + 33} y="122" text-anchor="middle">{hasRouter ? routerName : kind}</text>{/if}
     <text class="node-lbl" x="302" y="122" text-anchor="middle">{exitName}</text>
-    {#if hasF50}<text class="node-sub" x="105" y="56" text-anchor="middle">{radio}</text>{/if}
-    <text class="node-sub" x={(rx + 66 + 270) / 2} y="56" text-anchor="middle">{kind}</text>
+    {#if hasF50}<text class="node-sub" x={hasMid ? 105 : 170} y="56" text-anchor="middle">{radio}</text>{/if}
+    {#if hasMid}<text class="node-sub" x={(rx + 66 + 270) / 2} y="56" text-anchor="middle">{hasRouter && hasMihomo ? kind : hasRouter ? '直连' : ''}</text>{/if}
   </svg>
   <div class="legs">
     {#if s.ufi}
       <div><small>{s.ufi.signal.network.startsWith('4G') ? '4G' : '5G'} 信号</small><b class={s.ufi.signal.rsrp > -100 ? 'ok' : 'warn'}>−{Math.abs(s.ufi.signal.rsrp)} dBm</b></div>
-    {:else}
+    {:else if hasRouter}
       <div><small>在线设备</small><b>{s.clients.length} 台</b></div>
     {/if}
-    <div><small>WAN 在线</small><b>{s.status ? duration(s.status.wan.uptime) : '—'}</b></div>
-    <div><small>代理延迟</small><b class={latClass(delay)}>{delay == null ? '—' : delay + ' ms'}</b></div>
+    {#if hasRouter}<div><small>WAN 在线</small><b>{s.status ? duration(s.status.wan.uptime) : '—'}</b></div>{/if}
+    {#if hasMihomo}<div><small>代理延迟</small><b class={latClass(delay)}>{delay == null ? '—' : delay + ' ms'}</b></div>{/if}
   </div>
 </section>

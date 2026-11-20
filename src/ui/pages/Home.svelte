@@ -101,7 +101,7 @@
           <path d="M12 62a48 48 0 0 1 96 0" fill="none" stroke="url(#tg)" stroke-width="9" stroke-linecap="round" stroke-dasharray="150.8" stroke-dashoffset={150.8 * (1 - Math.min(100, temp) / 100)} />
           <text x="60" y="58" text-anchor="middle" font-family="Bricolage Grotesque" font-weight="800" font-size="24" fill="var(--ink)">{temp}°</text>
         </svg>
-        <div class="cap mono" style="text-align:center">{throttle}° 起限速 · {temp < throttle ? `还差 ${throttle - temp}°` : '已在限速'}</div>
+        <div class="cap mono" style="text-align:center">{throttle}° 起限速 · {temp < throttle ? `还差 ${Math.round((throttle - temp) * 10) / 10}°` : '已在限速'}</div>
       </button>
     {/if}
     <button class="card tile" onclick={() => go(s.ufi ? 'dev' : 'more')}>

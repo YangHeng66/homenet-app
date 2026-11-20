@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { shortModel } from '../devices/client';
   import { store as s, conn, keyLineMember } from '../../lib/store.svelte';
   import { rateParts, duration, latClass } from '../../lib/format';
   import { pauseOffscreen } from '../attach';
@@ -10,7 +11,7 @@
   const hasMihomo = !!conn.mihomo;
   // 中间节点：有路由器画路由器，只有代理时画代理内核；两个都没配就是 F50 直接到互联网
   const hasMid = hasRouter || hasMihomo;
-  const short = (v: string | undefined, d: string) => (v ? v.split(/\s+/).at(-1)! : d);
+  const short = (v: string | undefined, d: string) => (v ? shortModel(v) : d);
   const f50Name = $derived(short(s.ufi?.model, 'F50'));
   const routerName = $derived(short(s.board?.model, '路由器'));
   const exitName = $derived(s.proxies ? keyLineMember() ?? '出口' : hasMihomo ? '出口' : '互联网');

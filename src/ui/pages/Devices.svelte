@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { shortModel } from '../devices/client';
   import { onMount } from 'svelte';
   import { store as s, conn, refreshUfi, refreshRouter, refreshClients, loadF50, loadRouterPage } from '../../lib/store.svelte';
   import { poll } from '../../lib/poll';
@@ -15,7 +16,7 @@
     return poll(() => (dev === 'f50' ? refreshUfi() : Promise.all([refreshRouter(), refreshClients()])), false);
   });
 
-  const short = (v: string | undefined, d: string) => (v ? v.split(/\s+/).at(-1)! : d);
+  const short = (v: string | undefined, d: string) => (v ? shortModel(v) : d);
 </script>
 
 <main class="page">

@@ -76,7 +76,7 @@
         <li data-cl class:off={ctl?.blocked}><button class="cl-row" onclick={() => openSheet({ kind: 'client', mac: c.mac })}>
           <span class="av" style="background:{color}38;color:{color}"><Icon name={clientIcon(c)} /></span>
           <b>{c.name}{#if c.isSelf}<em class="tag me">本机</em>{/if}{#if ctl && ctl.policy !== 'rule'}<em class="tag">{POLICY.find(p => p.k === ctl.policy)?.short}</em>{/if}{#if ctl?.limitMbps}<em class="tag">限速 {ctl.limitMbps}M</em>{/if}{#if ctl?.blocked}<em class="tag bad">已暂停</em>{/if}</b>
-          <span class="spd">{#if ctl?.blocked}<span class="dim">—</span>{:else}↓{mbs(c.rate.down)} MB/s<br /><span class="up">↑{mbs(c.rate.up)}</span>{/if}</span>
+          <span class="spd">{#if ctl?.blocked}<span class="dim">—</span>{:else if !c.rate.down && !c.rate.up}{:else}↓{mbs(c.rate.down)} MB/s<br /><span class="up">↑{mbs(c.rate.up)}</span>{/if}</span>
           <small>{c.ip} · {linkText(c)}</small>
         </button></li>
       {/each}

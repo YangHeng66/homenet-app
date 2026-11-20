@@ -40,7 +40,7 @@
   <section class="card pad">
     <div class="lbl">系统</div>
     <div class="rings3">
-      <Ring pct={st.cpu} color="var(--lime)" text="{st.cpu}%" label="CPU" />
+      {#if st.cpu != null}<Ring pct={st.cpu} color="var(--lime)" text="{st.cpu}%" label="CPU" />{/if}
       <Ring pct={st.memory} color="var(--sky)" text="{st.memory}%" label="内存" />
       {#if st.temperature != null}<Ring pct={st.temperature} color="var(--mint)" text="{st.temperature}°" label="温度" />
       {:else}<Ring pct={st.load[0] * 100} color="var(--mint)" text={st.load[0].toFixed(2)} label="负载" size={15} />{/if}

@@ -70,6 +70,9 @@ export function createOpenWrt(endpoint: Endpoint, http: Http, opts: OpenWrtOptio
   let loggingIn: Promise<void> | null = null;
   let prevCpu: { total: number; idle: number } | null = null;
   let prevWan: { dev: string; at: number; rx: number; tx: number; rate: Rate } | null = null;
+  /** uhttpd 对“会话无效”和“ACL 不允许”回同一个错误码；重新登录后仍被拒的方法记在这里，以后不再为它重新登录 */
+  const aclDenied = new Set<string>();
+  const key = (c: Call) => `${c.object} ${c.method}`;
 
   async function rpc(calls: Call[], session = sid): Promise<Result[]> {
     const body = calls.map((c, i) => ({ jsonrpc: '2.0', id: i + 1, method: 'call', params: [session, c.object, c.method, c.args ?? {}] }));
@@ -100,10 +103,13 @@ export function createOpenWrt(endpoint: Endpoint, http: Http, opts: OpenWrtOptio
   /** 批量调用，一次 HTTP 请求。会话过期时重新登录一次再整批重试 */
   async function batch(calls: Call[], relogin = true): Promise<Result[]> {
     if (!calls.length) return [];
-    let res = await rpc(calls);
+    const settle = (res: Result[]) => res.map((r, i) => (r.expired && aclDenied.has(key(calls[i])) ? { ...r, expired: false } : r));
+    let res = settle(await rpc(calls));
     if (relogin && creds && res.some(r => r.expired)) {
       await doLogin();
       res = await rpc(calls);
+      res.forEach((r, i) => r.expired && aclDenied.add(key(calls[i])));
+      res = settle(res);
     }
     return res;
   }
@@ -128,9 +134,9 @@ export function createOpenWrt(endpoint: Endpoint, http: Http, opts: OpenWrtOptio
   }
 
   /** 发出去之后路由器会断网或重启，收不到回应是正常的 */
-  async function fireAndForget(object: string, method: string) {
+  async function fireAndForget(object: string, method: string, args?: Record<string, unknown>) {
     try {
-      await call(object, method);
+      await call(object, method, args);
     } catch (e) {
       if (!(e instanceof ConnectorError) || (e.kind !== 'network' && e.kind !== 'timeout')) throw e;
     }
@@ -141,7 +147,7 @@ export function createOpenWrt(endpoint: Endpoint, http: Http, opts: OpenWrtOptio
   }
 
   async function wireless(withChannels: boolean, known?: Record<string, any> | null): Promise<{ radios: Radio[]; assoc: Record<string, { mac: string; signal?: number }[]>; channels: Record<string, string[]> }> {
-    const status: Record<string, any> = known ?? await call('network.wireless', 'status');
+    const status: Record<string, any> = known ?? await call('luci-rpc', 'getWirelessDevices');
     const radios: Radio[] = Object.entries(status).map(([id, st]) => {
       const aps = (st.interfaces ?? []) as { ifname?: string; config?: { ssid?: string } }[];
       return {
@@ -241,8 +247,9 @@ export function createOpenWrt(endpoint: Endpoint, http: Http, opts: OpenWrtOptio
       const n = String(stat?.data ?? '').split('\n')[0].trim().split(/\s+/).slice(1, 9).map(Number);
       const cur = { total: n.reduce((a, b) => a + (b || 0), 0), idle: (n[3] || 0) + (n[4] || 0) };
       const dTotal = cur.total - (prevCpu?.total ?? 0), dIdle = cur.idle - (prevCpu?.idle ?? 0);
-      const cpu = dTotal > 0 ? Math.round((1 - dIdle / dTotal) * 100) : 0;
-      prevCpu = cur;
+      // LuCI 默认 ACL 不让读 /proc/stat，这时不报 CPU
+      const cpu = !stat ? undefined : dTotal > 0 ? Math.round((1 - dIdle / dTotal) * 100) : 0;
+      if (stat) prevCpu = cur;
 
       const ifaces: Iface[] = dump?.interface ?? [];
       const wan = ifaces.find(i => i.interface === 'wan');
@@ -283,12 +290,13 @@ export function createOpenWrt(endpoint: Endpoint, http: Http, opts: OpenWrtOptio
     },
 
     async clients() {
-      const [leaseFile, hosts, dump, neigh, wifiStatus] = await tryBatch([
-        { object: 'file', method: 'read', args: { path: '/tmp/dhcp.leases' } },
+      const [leases, hosts, dump, neigh, wifiStatus] = await tryBatch([
+        // LuCI 默认 ACL 不让直接读 /tmp/dhcp.leases，用 LuCI 自己的接口
+        { object: 'luci-rpc', method: 'getDHCPLeases', args: { family: 4 } },
         { object: 'uci', method: 'get', args: { config: 'dhcp', type: 'host' } },
         { object: 'network.interface', method: 'dump' },
         { object: 'file', method: 'exec', args: { command: '/sbin/ip', params: ['-4', 'neigh', 'show'] } },
-        { object: 'network.wireless', method: 'status' },
+        { object: 'luci-rpc', method: 'getWirelessDevices' },
       ]);
       const { radios, assoc } = await wireless(false, wifiStatus ?? {});
       const nowSec = now() / 1000;
@@ -301,11 +309,11 @@ export function createOpenWrt(endpoint: Endpoint, http: Http, opts: OpenWrtOptio
         return seen.get(k)!;
       };
 
-      // dnsmasq 租约文件每行：过期时间 MAC IP 主机名 client-id，没有主机名时是 *
-      for (const line of String(leaseFile?.data ?? '').split('\n')) {
-        const [expires, mac, ip, name] = line.trim().split(/\s+/);
-        if (!mac || !ip) continue;
-        Object.assign(at(mac), { ip, expires: Number(expires), name: name && name !== '*' ? name : undefined });
+      // expires 是剩余秒数，永久租约是 false
+      for (const l of (leases?.dhcp_leases ?? []) as { expires?: number | false; hostname?: string; macaddr?: string; ipaddr?: string }[]) {
+        if (!l.macaddr || !l.ipaddr) continue;
+        const expires = typeof l.expires === 'number' ? nowSec + l.expires : Infinity;
+        Object.assign(at(l.macaddr), { ip: l.ipaddr, expires, name: l.hostname || undefined });
       }
       for (const h of Object.values((hosts?.values ?? {}) as Record<string, UciSection>)) {
         for (const mac of list(h.mac)) {
@@ -417,12 +425,13 @@ export function createOpenWrt(endpoint: Endpoint, http: Http, opts: OpenWrtOptio
     },
 
     async resetWan() {
-      await call('network.interface.wan', 'down');
-      await call('network.interface.wan', 'up');
+      // LuCI 默认 ACL 没有 network.interface.wan up/down；OpenWrt 的 ifup 本身就是先断开再连
+      const r = await call('file', 'exec', { command: '/sbin/ifup', params: ['wan'] });
+      if (r.code !== 0) throw new ConnectorError('device', `重置 WAN 失败（ifup 返回 ${r.code}）`);
     },
 
     restartNetwork() {
-      return fireAndForget('network', 'restart');
+      return fireAndForget('rc', 'init', { name: 'network', action: 'restart' });
     },
 
     reboot() {
@@ -434,7 +443,11 @@ export function createOpenWrt(endpoint: Endpoint, http: Http, opts: OpenWrtOptio
       const d = new Date(now());
       const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const file = `backup-${NAME_RE.test(hostname ?? '') ? hostname : 'openwrt'}-${date}.tar.gz`;
-      const r = await call('file', 'exec', { command: '/sbin/sysupgrade', params: ['-b', `/tmp/${file}`] });
+      const c = { object: 'file', method: 'exec', args: { command: '/sbin/sysupgrade', params: ['-b', `/tmp/${file}`] } };
+      const [res] = await batch([c]);
+      if (res.code === DENIED) throw new ConnectorError('unsupported', 'LuCI 默认权限不允许 App 生成备份，请在 LuCI「系统 → 备份/升级」里下载');
+      if (res.code !== 0) throw fail(c, res);
+      const r = res.data;
       if (r.code !== 0) throw new ConnectorError('device', `备份失败：${String(r.stderr ?? '').slice(0, 120) || `sysupgrade 返回 ${r.code}`}`);
       return file;
     },

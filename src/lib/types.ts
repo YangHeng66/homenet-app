@@ -220,7 +220,8 @@ export interface RouterBoard {
 export interface RouterStatus {
   uptime: number;
   /** 0–100 */
-  cpu: number;
+  /** 读不到 /proc/stat（LuCI 默认权限）时没有 */
+  cpu?: number;
   /** 0–100 */
   memory: number;
   memTotal: Bytes;
@@ -332,9 +333,10 @@ export interface UfiSignal {
   /** 当前驻留的频段，例如 ["n41", "B39"] */
   bands: string[];
   rsrp: number;
-  rsrq: number;
-  sinr: number;
-  pci: number;
+  /** 设备没报时为空，界面显示“—” */
+  rsrq?: number;
+  sinr?: number;
+  pci?: number;
   /** 0–4 格 */
   bars: number;
 }

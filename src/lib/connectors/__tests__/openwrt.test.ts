@@ -99,6 +99,22 @@ describe('OpenWrt 连接器：会话', () => {
     expect(u.names().filter(n => n === 'session login')).toHaveLength(1);
   });
 
+  it('重新登录后仍被拒绝的方法是 ACL 不允许：报权限错误，之后不再为它反复登录', async () => {
+    const u = ubus({
+      'session login': () => ({ ubus_rpc_session: SID }),
+      'system info': () => ({ uptime: 1 }),
+      'luci-rpc getWirelessDevices': () => DENIED,
+    });
+    const r = createOpenWrt({ url: URL_, username: 'root', secret: 'pw' }, u.http);
+    await r.login('root', 'pw');
+    u.log.length = 0;
+    await expect(r.wifi()).rejects.toMatchObject({ kind: 'auth', message: expect.stringMatching(/拒绝了 luci-rpc getWirelessDevices/) });
+    expect(u.names()).toEqual(['luci-rpc getWirelessDevices', 'session login', 'luci-rpc getWirelessDevices']);
+    u.log.length = 0;
+    await expect(r.wifi()).rejects.toMatchObject({ kind: 'auth' });
+    expect(u.names()).toEqual(['luci-rpc getWirelessDevices']);
+  });
+
   it('没有账号可用时会话无效 → auth', async () => {
     const u = ubus({ 'system reboot': () => DENIED });
     await expect(createOpenWrt({ url: URL_ }, u.http).reboot()).rejects.toMatchObject({ kind: 'auth' });
@@ -146,26 +162,26 @@ describe('OpenWrt 连接器：状态', () => {
     expect(s.wan.rate).toEqual({ down: 1_000_000, up: 100_000 });
   });
 
-  it('status：没有温度传感器、WAN 没起来时不报错', async () => {
+  it('status：LuCI 默认权限读不到 /proc/stat 和温度、WAN 没起来时不报错', async () => {
     const { r } = await loggedIn({
       'system info': () => ({ uptime: 10, load: [0, 0, 0], memory: { total: 100, free: 40 } }),
       'network.interface dump': () => ({ interface: [DUMP.interface[1], { interface: 'wan', up: false, device: 'eth0' }] }),
       'network.device status': () => ({ eth0: { statistics: { rx_bytes: 0, tx_bytes: 0 } } }),
-      'file read': a => (a.path === '/proc/stat' ? { data: 'cpu  0 0 0 0 0 0 0 0\n' } : 4),
+      'file read': () => 6,
     });
     const s = await r.status();
     expect(s.temperature).toBeUndefined();
     expect(s.memory).toBe(60);
-    expect(s.cpu).toBe(0);
+    expect(s.cpu).toBeUndefined();
     expect(s.wan).toEqual({ up: false, uptime: 0, device: 'eth0', rate: { up: 0, down: 0 } });
   });
 
-  it('clients：DHCP 租约 + 固定分配 + 无线关联 + 邻居表', async () => {
-    const leases = [
-      '1762800000 02:5a:11:3c:9e:12 192.168.1.111 Pixel-9 01:02:5a:11:3c:9e:12',
-      '1762800000 02:5a:11:7b:04:5a 192.168.1.88 Desktop-PC *',
-      '1700000000 02:5a:11:00:00:01 192.168.1.50 * *',
-    ].join('\n') + '\n';
+  it('clients：DHCP 租约（luci-rpc）+ 固定分配 + 无线关联 + 邻居表', async () => {
+    const leases = { dhcp_leases: [
+      { expires: 10000, hostname: 'Pixel-9', macaddr: '02:5A:11:3C:9E:12', ipaddr: '192.168.1.111' },
+      { expires: 10000, hostname: 'Desktop-PC', macaddr: '02:5A:11:7B:04:5A', ipaddr: '192.168.1.88' },
+      { expires: -5, macaddr: '02:5A:11:00:00:01', ipaddr: '192.168.1.50' },
+    ], dhcp6_leases: [] };
     const neigh = [
       '192.168.1.111 dev br-lan lladdr 02:5a:11:3c:9e:12 REACHABLE',
       '192.168.1.88 dev br-lan lladdr 02:5a:11:7b:04:5a STALE',
@@ -174,9 +190,9 @@ describe('OpenWrt 连接器：状态', () => {
       '10.75.12.1 dev eth0 lladdr 02:00:00:00:00:01 REACHABLE',
     ].join('\n') + '\n';
     const { r, calls, log } = await loggedIn({
-      'file read': a => (a.path === '/tmp/dhcp.leases' ? { data: leases } : 4),
+      'luci-rpc getDHCPLeases': () => leases,
       'uci get': () => ({ values: { cfg01: { '.type': 'host', '.name': 'cfg01', mac: '02:5A:11:7B:04:5A', ip: '192.168.1.88', name: 'desktop' } } }),
-      'network.wireless status': () => WIRELESS,
+      'luci-rpc getWirelessDevices': () => WIRELESS,
       'network.interface dump': () => DUMP,
       'file exec': () => ({ code: 0, stdout: neigh }),
       'iwinfo assoclist': a => ASSOC[a.device],
@@ -195,18 +211,18 @@ describe('OpenWrt 连接器：状态', () => {
 
   it('clients：读不到邻居表时，有线设备按租约是否过期判断在线', async () => {
     const { r } = await loggedIn({
-      'file read': () => ({ data: '1762800000 02:5a:11:7b:04:5a 192.168.1.88 nas *\n1700000000 02:5a:11:00:00:01 192.168.1.50 * *\n' }),
+      'luci-rpc getDHCPLeases': () => ({ dhcp_leases: [{ expires: 10000, hostname: 'nas', macaddr: '02:5a:11:7b:04:5a', ipaddr: '192.168.1.88' }, { expires: 0, macaddr: '02:5a:11:00:00:01', ipaddr: '192.168.1.50' }, { expires: false, hostname: 'printer', macaddr: '02:5a:11:00:00:02', ipaddr: '192.168.1.9' }] }),
       'uci get': () => ({ values: {} }),
-      'network.wireless status': () => ({}),
+      'luci-rpc getWirelessDevices': () => ({}),
       'network.interface dump': () => DUMP,
       'file exec': () => 6,
     }, { now: () => 1762790000_000 });
-    expect((await r.clients()).map(c => [c.ip, c.online])).toEqual([['192.168.1.88', true], ['192.168.1.50', false]]);
+    expect((await r.clients()).map(c => [c.ip, c.online])).toEqual([['192.168.1.88', true], ['192.168.1.50', false], ['192.168.1.9', true]]);
   });
 
   it('wifi：射频、信道表（去掉受限信道）、客户端数', async () => {
     const { r } = await loggedIn({
-      'network.wireless status': () => WIRELESS,
+      'luci-rpc getWirelessDevices': () => WIRELESS,
       'iwinfo assoclist': a => ASSOC[a.device],
       'iwinfo freqlist': a => ({
         radio0: { results: [{ channel: 1, mhz: 2412 }, { channel: 6, mhz: 2437 }, { channel: 11, mhz: 2462 }] },
@@ -329,15 +345,16 @@ describe('OpenWrt 连接器：服务和系统操作', () => {
     await expect(r.serviceAction('../x', 'stop')).rejects.toMatchObject({ kind: 'device' });
   });
 
-  it('resetWan：先 down 再 up', async () => {
-    const { r, names } = await loggedIn({ 'network.interface.wan down': () => ({}), 'network.interface.wan up': () => ({}) });
+  it('resetWan：执行 /sbin/ifup wan（OpenWrt 的 ifup 会先断开再连），LuCI 默认 ACL 允许', async () => {
+    const { r, log } = await loggedIn({ 'file exec': () => ({ code: 0 }) });
     await r.resetWan();
-    expect(names()).toEqual(['network.interface.wan down', 'network.interface.wan up']);
+    expect(log.map(l => [l[0], l[1]])).toEqual([['file exec', { command: '/sbin/ifup', params: ['wan'] }]]);
   });
 
   it('restartNetwork / reboot：请求发出去之后连接断开不算失败', async () => {
-    const { r } = await loggedIn({ 'network restart': () => { throw new Error('socket hang up'); }, 'system reboot': () => { throw new Error('socket hang up'); } });
+    const { r, log } = await loggedIn({ 'rc init': () => { throw new Error('socket hang up'); }, 'system reboot': () => { throw new Error('socket hang up'); } });
     await expect(r.restartNetwork()).resolves.toBeUndefined();
+    expect(log[0].slice(0, 2)).toEqual(['rc init', { name: 'network', action: 'restart' }]);
     await expect(r.reboot()).resolves.toBeUndefined();
   });
 
@@ -348,6 +365,11 @@ describe('OpenWrt 连接器：服务和系统操作', () => {
     }, { now: () => new Date(2026, 10, 10, 12).getTime() });
     expect(await r.backup()).toBe('backup-OpenWrt-2026-11-10.tar.gz');
     expect(log.at(-1)![1]).toEqual({ command: '/sbin/sysupgrade', params: ['-b', '/tmp/backup-OpenWrt-2026-11-10.tar.gz'] });
+  });
+
+  it('backup：LuCI 默认 ACL 不允许 sysupgrade -b → unsupported，提示去 LuCI 下载', async () => {
+    const { r } = await loggedIn({ 'system board': () => ({ hostname: 'OpenWrt' }), 'file exec': () => 6 });
+    await expect(r.backup()).rejects.toMatchObject({ kind: 'unsupported', message: expect.stringMatching(/LuCI/) });
   });
 
   it('backup：sysupgrade 返回非 0 → device', async () => {

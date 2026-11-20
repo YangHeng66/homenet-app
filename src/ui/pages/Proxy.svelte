@@ -254,7 +254,8 @@
   <section class="card pad">
     <div class="lbl">{kind} 内核<span class="r {s.nikkiRunning ? 'verified' : 'mono bad'}">{s.nikkiRunning ? `运行中 · ${s.mihomoVersion}` : '已停止'}</span></div>
     <div class="rings3">
-      <Ring pct={s.status?.cpu ?? 0} color="var(--lime)" text="{s.status?.cpu ?? 0}%" label="路由器 CPU" />
+      {#if s.status?.cpu != null}<Ring pct={s.status.cpu} color="var(--lime)" text="{s.status.cpu}%" label="路由器 CPU" />
+      {:else}{@const l = s.status?.load[0] ?? 0}<Ring pct={l * 100} color="var(--lime)" text={l.toFixed(2)} label="路由器负载" size={15} />{/if}
       <Ring pct={memMB / 2.56} color="var(--sky)" text="{memMB}M" label="内存" size={15} />
       <Ring pct={Math.min(100, conns.length)} color="var(--amber)" text={String(conns.length)} label="连接" />
     </div>

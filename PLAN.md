@@ -452,3 +452,24 @@ release 包在 MuMu 上回归过：向导保存 → Keystore 写入 → 强制�
 - 首页拓扑图在没有路由器或代理时仍画路由器和 mihomo 节点（M0 的设计，没改）。
 - 第二条及以后的重点线路向导不编辑，原样保留；界面只展示第一条。
 - 属于插件（M3）的按钮保持“只弹提示”：场景编辑、套餐修改、历史曲线、访客网络、Tailscale 步骤说明。
+
+## 14. 真机联调第一轮（2026-11-20，只读）
+
+在家用电脑经 SSH 读了路由器（OpenWrt 25.12.6 + LuCI）、mihomo v1.19.32、F50（UFI-TOOLS 4.1.5）的真实返回，没有做任何写操作。原始数据只留在本机，没有进仓库。
+
+**路由器：LuCI 默认 ACL 限制了不少调用**（root 登录也一样，ACL 按文件逐项授权）
+- `network.wireless status` 不在 ACL 里 → 改用 `luci-rpc getWirelessDevices`（格式相同）
+- `/tmp/dhcp.leases` 不可读 → 改用 `luci-rpc getDHCPLeases`（expires 是剩余秒数，永久租约为 false）。这就是之前设备名变成 IP、头像显示 "19" 的原因
+- `/proc/stat`、thermal 不可读 → CPU 和温度不显示，界面改显示负载
+- `network.interface.wan up/down`、`network restart` 不在 ACL → 改为 `file exec /sbin/ifup wan`、`rc init network restart`
+- `sysupgrade -b` 不允许 → 备份报“请在 LuCI 里下载”
+- uhttpd 对“会话无效”和“ACL 不允许”回同一个错误码 -32002，之前每次刷新都会重新登录一次；现在重新登录后仍被拒的方法会记下来，不再为它重新登录
+- 未处理：`uci revert` / `uci rollback` 也不在 ACL，Wi-Fi 改动的“撤销”只能等倒计时自动回滚，需要真机写操作时确认
+
+**F50**：SA 下直接查 `Nr_*` / `nr_*` 字段全是空字符串，只有查 `network_information` 才会展开成有值的字段；同一请求里两者都查时，空值会盖掉展开的值。这就是之前显示 “SINR 0 · RSRQ -0” 的原因。现在只查 `network_information`，空值显示“—”。`realtime_rx/tx_thrpt` 在网线连接模式下一直是 0（未处理）。
+
+**mihomo**：解析正常。连通性推测补了两点：Google 规则集包含 YouTube；`China-IP`、`Local-IP` 这类 IP 规则集按 GEOIP 处理，不再算作“无法判断”。
+
+**界面**：拓扑图只画已配置的模块；没有单设备速率时，在线设备卡片显示无线 / 有线台数。
+
+**下一轮**：手机装新 APK 实测；写操作（Wi-Fi 开关、改名、锁频）逐项确认。
